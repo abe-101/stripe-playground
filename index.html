@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stripe Payment Method Tester</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 480px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f6f9fc;
+            color: #32325d;
+        }
+        h1 { font-size: 24px; font-weight: 500; margin-bottom: 8px; }
+        .subtitle { color: #6b7c93; font-size: 14px; margin-bottom: 24px; }
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #e6ebf1;
+            margin-bottom: 20px;
+        }
+        .tab {
+            padding: 12px 20px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 14px;
+            color: #6b7c93;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+        }
+        .tab:hover { color: #32325d; }
+        .tab.active { color: #635bff; border-bottom-color: #635bff; }
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 16px;
+        }
+        label { display: block; font-size: 14px; font-weight: 500; margin-bottom: 8px; }
+        input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #e6ebf1;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-bottom: 16px;
+            font-family: monospace;
+        }
+        input:focus { outline: none; border-color: #635bff; box-shadow: 0 0 0 1px #635bff; }
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #635bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        button:hover { background: #5851ea; }
+        button:disabled { background: #9fa7b4; cursor: not-allowed; }
+        #payment-element { margin-bottom: 16px; }
+        .result {
+            padding: 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-top: 16px;
+            display: none;
+        }
+        .result.success { background: #d4edda; border: 1px solid #28a745; color: #155724; display: block; }
+        .result.error { background: #f8d7da; border: 1px solid #dc3545; color: #721c24; display: block; }
+        .result code { background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 3px; user-select: all; }
+        .copy-btn { width: auto; padding: 6px 12px; font-size: 12px; margin-top: 8px; background: #6c757d; }
+        .copy-btn:hover { background: #5a6268; }
+        .hidden { display: none; }
+        .help { font-size: 12px; color: #6b7c93; margin-top: -12px; margin-bottom: 16px; }
+        a { color: #635bff; }
+        footer { text-align: center; font-size: 12px; color: #aab7c4; margin-top: 24px; }
+        .github-fork-ribbon {
+            position: fixed;
+            top: 0;
+            right: 0;
+            padding: 10px 50px;
+            background: #151513;
+            color: white;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: bold;
+            transform: rotate(45deg) translate(25%, -10px);
+            transform-origin: top right;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+        .github-fork-ribbon:hover { background: #635bff; color: white; }
+    </style>
+</head>
+<body>
+    <a href="https://github.com/abe-101/stripe-playground" class="github-fork-ribbon" target="_blank">Fork me on GitHub</a>
+    <h1>Stripe Payment Method Tester</h1>
+    <p class="subtitle">Save payment methods using SetupIntents</p>
+
+    <div class="tabs">
+        <button class="tab active" onclick="switchMode('connect')">Stripe Connect</button>
+        <button class="tab" onclick="switchMode('standard')">Standard</button>
+    </div>
+
+    <div class="card">
+        <label>Publishable Key</label>
+        <input type="text" id="pk" placeholder="pk_test_...">
+
+        <div id="connect-fields">
+            <label>Connected Account ID</label>
+            <input type="text" id="acct" placeholder="acct_...">
+        </div>
+
+        <label>SetupIntent Client Secret</label>
+        <input type="text" id="secret" placeholder="seti_..._secret_...">
+
+        <button onclick="initialize()" id="init-btn">Initialize</button>
+    </div>
+
+    <div class="card hidden" id="payment-section">
+        <div id="payment-element"></div>
+        <button onclick="submit()" id="submit-btn">Save Payment Method</button>
+        <div id="result" class="result">
+            <div id="result-text"></div>
+            <button class="copy-btn" onclick="copyResult()">Copy ID</button>
+        </div>
+    </div>
+
+    <footer>
+        <a href="https://docs.stripe.com/payments/payment-element" target="_blank">Stripe Docs</a>
+    </footer>
+
+    <script>
+        let stripe, elements, clientSecret, paymentMethodId;
+        let mode = 'connect';
+
+        function switchMode(m) {
+            mode = m;
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('connect-fields').classList.toggle('hidden', m === 'standard');
+        }
+
+        function initialize() {
+            const pk = document.getElementById('pk').value.trim();
+            const acct = document.getElementById('acct').value.trim();
+            clientSecret = document.getElementById('secret').value.trim();
+
+            if (!pk || !clientSecret || (mode === 'connect' && !acct)) {
+                alert('Please fill in all fields');
+                return;
+            }
+
+            stripe = Stripe(pk, mode === 'connect' ? { stripeAccount: acct } : {});
+            elements = stripe.elements({ clientSecret, appearance: { theme: 'stripe' } });
+            elements.create('payment').mount('#payment-element');
+
+            document.getElementById('payment-section').classList.remove('hidden');
+            document.getElementById('init-btn').disabled = true;
+            document.getElementById('init-btn').textContent = '✓ Initialized';
+        }
+
+        async function submit() {
+            const btn = document.getElementById('submit-btn');
+            btn.disabled = true;
+            btn.textContent = 'Processing...';
+
+            const { setupIntent, error } = await stripe.confirmSetup({
+                elements,
+                confirmParams: { return_url: window.location.href },
+                redirect: 'if_required'
+            });
+
+            btn.disabled = false;
+            btn.textContent = 'Save Payment Method';
+
+            if (error) {
+                showResult(false, error.message);
+            } else {
+                paymentMethodId = setupIntent.payment_method;
+                showResult(true, `Payment Method: <code>${paymentMethodId}</code>`);
+            }
+        }
+
+        function showResult(success, msg) {
+            const r = document.getElementById('result');
+            document.getElementById('result-text').innerHTML = msg;
+            r.className = 'result ' + (success ? 'success' : 'error');
+        }
+
+        function copyResult() {
+            if (paymentMethodId) {
+                navigator.clipboard.writeText(paymentMethodId);
+                document.querySelector('.copy-btn').textContent = 'Copied!';
+                setTimeout(() => document.querySelector('.copy-btn').textContent = 'Copy ID', 2000);
+            }
+        }
+
+        // Handle redirect back
+        const params = new URLSearchParams(location.search);
+        if (params.get('setup_intent')) {
+            addEventListener('DOMContentLoaded', () => {
+                paymentMethodId = params.get('setup_intent');
+                showResult(params.get('redirect_status') === 'succeeded', 
+                    `SetupIntent: <code>${paymentMethodId}</code>`);
+                document.getElementById('payment-section').classList.remove('hidden');
+            });
+        }
+    </script>
+</body>
+</html>
